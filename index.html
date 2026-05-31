@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚽ Jogo 3D - Sistema Digestório | 8º Ano</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+    body { background: #0a0e17; color: #e0e6f0; overflow: hidden; }
+    #ui { position: absolute; top: 20px; left: 20px; max-width: 380px; z-index: 10; pointer-events: none; }
+    .card { background: rgba(15, 23, 42, 0.85); border: 1px solid #38bdf8; border-radius: 12px; padding: 16px; margin-bottom: 12px; pointer-events: auto; backdrop-filter: blur(8px); }
+    h1 { font-size: 1.4rem; color: #38bdf8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    .tag { background: #064e3b; color: #34d399; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    #info { min-height: 80px; }
+    #quiz { margin-top: 10px; display: none; }
+    .btn { background: #38bdf8; color: #0a0e17; border: none; padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 4px; transition: 0.2s; }
+    .btn:hover { background: #7dd3fc; transform: scale(1.05); }
+    .btn:disabled { background: #475569; cursor: not-allowed; transform: none; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    .highlight { color: #facc15; font-weight: bold; }
+    .bncc { font-size: 0.8rem; color: #94a3b8; margin-top: 8px; border-top: 1px dashed #334155; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="ui">
+    <div class="card">
+      <h1>🧬 Sistema Digestório 3D</h1>
+      <span class="tag">BNCC: EF08CI09</span>
+      <p style="margin-top:6px; font-size:0.9rem;">Clique nos órgãos para desbloquear informações. Ao final, complete o desafio de sequência.</p>
+    </div>
+    <div class="card" id="info">
+      <em style="color:#94a3b8;">👆 Clique em um órgão para começar.</em>
+    </div>
+    <div class="card" id="quiz">
+      <h2 style="color:#facc15; margin-bottom:8px;">⚡ Desafio: Ordem da Digestão</h2>
+      <p id="quiz-prompt" style="font-size:0.9rem; margin-bottom:10px;">Ordene os órgãos clicando na sequência correta:</p>
+      <div id="quiz-options"></div>
+      <p id="quiz-feedback" style="margin-top:10px; font-weight:bold;"></p>
+      <button class="btn" id="reset-btn" style="display:none; margin-top:8px;">Reiniciar Jogo</button>
+    </div>
+  </div>
+
+  <script>
+    // 🌍 CONFIGURAÇÃO THREE.JS
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0e17);
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 100);
+    camera.position.set(0, 2, 6);    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    // 💡 ILUMINAÇÃO
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    const dir = new THREE.DirectionalLight(0x38bdf8, 0.8);
+    dir.position.set(5, 5, 5);
+    scene.add(dir);
+
+    // 🧬 ORGÃOS (GEOMETRIAS SIMPLIFICADAS)
+    const organs = [
+      { id: 'boca', name: 'Boca', color: 0xfca5a5, pos: [0, 2.5, 0], info: 'Início da digestão mecânica (mastigação) e química (amilase salivar).' },
+      { id: 'esofago', name: 'Esôfago', color: 0xfcd34d, pos: [0, 1.2, 0], info: 'Tubo muscular que conduz o bolo alimentar até o estômago via peristaltismo.' },
+      { id: 'estomago', name: 'Estômago', color: 0x60a5fa, pos: [-0.5, -0.2, 0], info: 'Produz ácido clorídrico e pepsina. Digestão de proteínas e formação do quimo.' },
+      { id: 'intestino_delgado', name: 'Intestino Delgado', color: 0x34d399, pos: [0, -1.8, 0], info: 'Local principal da digestão e absorção de nutrientes. Vilosidades aumentam a superfície.' },
+      { id: 'intestino_grosso', name: 'Intestino Grosso', color: 0xa78bfa, pos: [0, -3.5, 0], info: 'Absorção de água e sais minerais. Formação e eliminação das fezes.' }
+    ];
+
+    const organMeshes = [];
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    const correctOrder = ['boca', 'esofago', 'estomago', 'intestino_delgado', 'intestino_grosso'];
+    let selectedOrder = [];
+    let gameActive = false;
+
+    organs.forEach(org => {
+      let geo;
+      if (org.id === 'intestino_delgado' || org.id === 'intestino_grosso') {
+        geo = new THREE.TorusGeometry(1.2, 0.4, 12, 24);
+      } else if (org.id === 'estomago') {
+        geo = new THREE.CapsuleGeometry(0.8, 1.5, 8, 16);
+      } else {
+        geo = new THREE.CylinderGeometry(0.5, 0.5, 1.2, 16);
+      }
+      const mat = new THREE.MeshStandardMaterial({ color: org.color, roughness: 0.4, metalness: 0.2 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(...org.pos);
+      mesh.userData = org;
+      scene.add(mesh);
+      organMeshes.push(mesh);
+    });
+
+    // 🖱️ INTERAÇÃO
+    function onMouseClick(event) {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(organMeshes);      
+      if (intersects.length > 0) {
+        const data = intersects[0].object.userData;
+        document.getElementById('info').innerHTML = `
+          <h3 style="color:#facc15;">🔍 ${data.name}</h3>
+          <p style="margin-top:6px;">${data.info}</p>
+          <div class="bncc">Habilidade: <strong>EF08CI09</strong> - Analisar e descrever o sistema digestório humano.</div>
+        `;
+
+        // Ativa desafio após 3 cliques
+        if (!gameActive && document.getElementById('info').querySelectorAll('h3').length >= 1) {
+          startQuiz();
+        }
+      }
+    }
+
+    window.addEventListener('click', onMouseClick);
+
+    // 📝 QUIZ LÓGICO
+    function startQuiz() {
+      gameActive = true;
+      const quizDiv = document.getElementById('quiz');
+      quizDiv.style.display = 'block';
+      selectedOrder = [];
+      
+      const optionsDiv = document.getElementById('quiz-options');
+      optionsDiv.innerHTML = '';
+      const shuffled = [...correctOrder].sort(() => Math.random() - 0.5);
+      
+      shuffled.forEach(id => {
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.textContent = organs.find(o => o.id === id).name;
+        btn.onclick = () => {
+          if (!gameActive) return;
+          selectedOrder.push(id);
+          btn.disabled = true;
+          checkOrder();
+        };
+        optionsDiv.appendChild(btn);
+      });
+    }
+
+    function checkOrder() {
+      const feedback = document.getElementById('quiz-feedback');
+      if (selectedOrder.length === correctOrder.length) {
+        const isCorrect = selectedOrder.every((val, i) => val === correctOrder[i]);
+        if (isCorrect) {
+          feedback.innerHTML = `<span style="color:#34d399;">✅ Perfeito! A digestão segue essa ordem exata.</span>`;
+          document.getElementById('reset-btn').style.display = 'inline-block';        } else {
+          feedback.innerHTML = `<span style="color:#f87171;">❌ Sequência incorreta. Observe o caminho do alimento!</span>`;
+          setTimeout(() => { selectedOrder = []; startQuiz(); }, 1500);
+        }
+        gameActive = false;
+      }
+    }
+
+    document.getElementById('reset-btn').onclick = () => {
+      document.getElementById('quiz').style.display = 'none';
+      document.getElementById('info').innerHTML = '<em style="color:#94a3b8;">👆 Clique nos órgãos para revisar.</em>';
+      gameActive = false;
+    };
+
+    // 🎥 LOOP DE RENDERIZAÇÃO
+    function animate() {
+      requestAnimationFrame(animate);
+      organMeshes.forEach((m, i) => {
+        m.rotation.y += 0.005;
+        m.position.y += Math.sin(Date.now() * 0.001 + i) * 0.001;
+      });
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
